@@ -2,5 +2,5 @@ services:
   - type: web
     name: tasare7-generator
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /health
