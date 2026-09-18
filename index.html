@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>تصاريح النقل السياحي</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="shell"><section class="card"><header><h1>مولّد تصاريح النقل السياحي</h1><p>إنشاء ملف PDF رسمي من 7 صفحات باستخدام الاستمارات المعتمدة.</p></header>
+<form id="permitForm" enctype="multipart/form-data">
+<div class="section"><h2>الأساسيات</h2><div class="grid">
+<label>الشركة<select name="company" id="company"><option value="unlimited">ان ليميتد ايجيبت ترافيل — 2257</option><option value="memory">ميمورى تريب تورز — 1586</option></select></label>
+<label>نوع التصريح<select name="permit" id="permit"></select></label>
+<label>رقم الملف<input name="file_no" placeholder="CH202609-14GZL" required></label>
+<label>العدد<input name="pax" type="number" min="1" required></label>
+</div></div>
+<div class="section"><h2>المرشد والتواريخ</h2><div class="grid">
+<label>اسم المرشد الكامل<input name="guide" required></label><label>هاتف المرشد<input name="phone"></label>
+<label>تاريخ الرحلة<input name="trip_date" type="date" required></label><label>تحريراً في<input name="issue_date" type="date"></label>
+</div></div>
+<div class="section"><h2>البرنامج والفنادق</h2><label>البرنامج / أماكن الإقامة<textarea name="program" rows="3" required placeholder="زعفرانه – خان – ازهر – مصر القديمه – عشاء – الفندق"></textarea></label><div class="grid"><label>فندق الانطلاق<input name="hotel_from"></label><label>فندق الوصول<input name="hotel_to"></label></div></div>
+<div class="section"><h2>المرفقات</h2><div class="grid"><label>النيم ليست Excel<input name="rooming" type="file" accept=".xlsx,.xls" required></label><label>صورة إدارة البرامج <small>(اختياري؛ بدونها الناتج 6 صفحات)</small><input name="program_image" type="file" accept="image/*"></label></div></div>
+<button id="submitBtn" type="submit">إنشاء PDF النهائي</button><div id="status" role="status"></div></form></section></main>
+<script>
+const company=document.getElementById('company'), permit=document.getElementById('permit');
+const options={unlimited:[['cairo','توصيلة القاهرة'],['luxor_transfer','توصيلة الأقصر'],['luxor_overnight','مبيت الأقصر']],memory:[['cairo','توصيلة القاهرة'],['luxor_transfer','توصيلة الأقصر'],['luxor_overnight','مبيت الأقصر'],['hurghada','توصيلة الغردقة']]};
+function refresh(){permit.innerHTML=options[company.value].map(([v,t])=>`<option value="${v}">${t}</option>`).join('')} company.addEventListener('change',refresh); refresh();
+document.getElementById('permitForm').addEventListener('submit',async e=>{e.preventDefault();const b=document.getElementById('submitBtn'),s=document.getElementById('status');b.disabled=true;s.textContent='جاري تجهيز الاستمارات والتحقق من الصفحات...';try{const r=await fetch('/api/generate',{method:'POST',body:new FormData(e.target)});if(!r.ok){const j=await r.json();throw new Error(j.error||'حدث خطأ')}const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${e.target.file_no.value}_${permit.value}.pdf`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);s.textContent='تم إنشاء الملف وتنزيله.'}catch(err){s.textContent=err.message}finally{b.disabled=false}});
+</script></body></html>
