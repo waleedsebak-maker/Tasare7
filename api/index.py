@@ -10,6 +10,7 @@ from datetime import datetime, date
 
 from flask import Flask, request, send_file, jsonify, render_template
 from openpyxl import load_workbook, Workbook
+from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils.datetime import from_excel
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -83,53 +84,57 @@ LEGACY_PDF_TEMPLATES = {
 }
 
 ALIASES = {
-    "ID": ["id", "no", "no.", "م", "رقم", "الرقم"],
+    "ID": [
+        "id", "no", "no.", "م", "رقم", "الرقم"
+    ],
     "Chinese name": [
-        "name",
         "ch name", "chinese name",
         "الاسم بالصيني", "الاسم الصينى",
-        "الصينى", "中文姓名", "chinese"
-    ],
-    "English name": [
-        "spelling",
-        "english name",
-        "english",
-        "name spelling",
-        "romanized name",
-        "romanized",
-        "الاسم بالانجليزي",
-        "الاسم بالإنجليزي",
-        "الاسم الانجليزي",
-        "الاسم الإنجليزي",
-        "الاسم باللاتيني"
+        "الصينى", "中文姓名",
+        "chinese", "旅客姓名"
     ],
     "Surname": [
         "surname", "family name",
-        "اسم العائلة", "العائلة", "family"
+        "اسم العائلة", "العائلة",
+        "family", "英文姓"
     ],
     "Given name": [
         "given name", "first name",
-        "الاسم الأول", "الاسم الاول", "given"
+        "الاسم الأول", "الاسم الاول",
+        "given", "英文名"
     ],
-    "Sex": ["sex", "gender", "النوع", "الجنس"],
+    "Sex": [
+        "sex", "gender",
+        "النوع", "الجنس", "性别"
+    ],
     "DOB": [
         "dob", "date of birth",
-        "تاريخ الميلاد", "birth date"
+        "تاريخ الميلاد", "birth date",
+        "出生日期"
     ],
     "Passport": [
-        "passport", "passport no", "passportno",
-        "رقم الجواز", "جواز السفر", "passport number"
+        "passport", "passport no",
+        "passportno", "رقم الجواز",
+        "جواز السفر", "passport number",
+        "护照号码"
     ],
     "Expiry": [
         "expiry", "passport expiry",
         "date of expiry", "انتهاء الجواز",
-        "تاريخ انتهاء الجواز", "expiry date"
+        "تاريخ انتهاء الجواز", "expiry date",
+        "有效期"
     ],
     "Room": [
-        "room", "room no", "الغرفة",
-        "رقم الغرفة", "option", "room type"
+        "room", "room no",
+        "الغرفة", "رقم الغرفة",
+        "option", "room type",
+        "分房编号"
     ],
-    "Note": ["note", "notes", "ملاحظات", "ملحوظة"],
+    "Note": [
+        "note", "notes",
+        "ملاحظات", "ملحوظة",
+        "重要备注"
+    ],
 }
 
 
@@ -143,18 +148,35 @@ def norm(v):
 def fmt_date(v):
     if v in (None, ""):
         return ""
+
     if isinstance(v, (datetime, date)):
         return v.strftime("%d/%m/%Y")
+
     try:
         if isinstance(v, (int, float)) and 20000 < float(v) < 80000:
             return from_excel(v).strftime("%d/%m/%Y")
     except Exception:
         pass
+
     s = str(v).strip()
+
+    # DDMMYYYY مثل 23092026
+    m = re.match(r"^(\d{2})(\d{2})(\d{4})$", s)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}/{m.group(3)}"
+
+    # YYYYMMDD مثل 20260923
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})$", s)
+    if m:
+        return f"{m.group(3)}/{m.group(2)}/{m.group(1)}"
+
+    # YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
     m = re.match(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$", s)
     if m:
         return f"{m.group(3).zfill(2)}/{m.group(2).zfill(2)}/{m.group(1)}"
+
     return s.replace("-", "/")
+
 
 
 def ar(text):
@@ -186,59 +208,84 @@ def find_header_row(rows):
 
 
 def read_rooming(stream):
-    wb = load_workbook(stream, data_only=True, read_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return []
+    raw = stream.read() if hasattr(stream, "read") else bytes(stream)
 
-    hi = find_header_row(rows)
-    headers = [norm(v) for v in rows[hi]]
+    def load_xlsx(data):
+        wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return []
 
-    idx = {}
-    for canonical, opts in ALIASES.items():
-        for i, h in enumerate(headers):
-            if h in opts:
-                idx[canonical] = i
-                break
+        hi = find_header_row(rows)
+        headers = [norm(v) for v in rows[hi]]
 
-    out = []
-    for raw in rows[hi + 1:]:
-        if not any(v not in (None, "") for v in raw):
-            continue
+        idx = {}
+        for canonical, opts in ALIASES.items():
+            for i, h in enumerate(headers):
+                if h in opts:
+                    idx[canonical] = i
+                    break
 
-        item = {}
-        for key, col in idx.items():
-            item[key] = raw[col] if col < len(raw) else ""
+        out = []
+        for raw_row in rows[hi + 1:]:
+            if not any(v not in (None, "") for v in raw_row):
+                continue
 
-        english = str(item.get("English name") or "").strip()
-        chinese = str(item.get("Chinese name") or "").strip()
+            item = {}
+            for key, col in idx.items():
+                item[key] = raw_row[col] if col < len(raw_row) else ""
 
-        if not chinese and not english:
-            continue
+            if not item.get("Passport") and not item.get("Chinese name") and not item.get("Given name"):
+                continue
 
-        if not english:
-            surname = str(item.get("Surname") or "").strip()
-            given = str(item.get("Given name") or "").strip()
-            if surname or given:
-                english = "/".join(x for x in (surname, given) if x)
+            item["ID"] = item.get("ID") or len(out) + 1
 
-        item["English name"] = english
-        item["ID"] = item.get("ID") or len(out) + 1
+            for k in ("DOB", "Expiry"):
+                item[k] = fmt_date(item.get(k))
 
-        for k in ("DOB", "Expiry"):
-            item[k] = fmt_date(item.get(k))
+            for k in item:
+                if item[k] is None:
+                    item[k] = ""
 
-        for k in item:
-            if item[k] is None:
-                item[k] = ""
+            out.append(item)
 
-        out.append(item)
+        return out
 
-    return out
+    try:
+        return load_xlsx(raw)
+    except Exception:
+        # دعم Excel القديم .xls تلقائياً عن طريق LibreOffice
+        soffice = shutil.which("libreoffice") or shutil.which("soffice")
+        if not soffice:
+            raise ValueError("لا يمكن قراءة ملف Excel القديم .xls لأن LibreOffice غير متوفر")
 
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+            work = Path(td)
+            src = work / "rooming_source.xls"
+            src.write_bytes(raw)
 
-def replace_cell(cell, value, size=None, bold=True):
+            subprocess.run(
+                [
+                    soffice,
+                    "--headless",
+                    "--convert-to", "xlsx",
+                    "--outdir", str(work),
+                    str(src)
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=90
+            )
+
+            converted = work / "rooming_source.xlsx"
+            if not converted.exists():
+                raise ValueError("تعذر تحويل ملف Excel القديم .xls")
+
+            return load_xlsx(converted.read_bytes())
+
+def replace_cell(cell, value, size=14, bold=True):
     cell.text = str(value)
     for p in cell.paragraphs:
         for run in p.runs:
@@ -247,6 +294,123 @@ def replace_cell(cell, value, size=None, bold=True):
                 from docx.shared import Pt
                 run.font.size = Pt(size)
             run.bold = bool(bold)
+
+
+
+def _set_transport_cell(cell, label, value):
+    """Keep template label and write exactly one value."""
+    value = str(value or "").strip()
+    if not value:
+        return
+
+    paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+
+    original = " ".join(cell.text.split())
+    pos = original.find(label)
+
+    if pos >= 0:
+        base = original[:pos] + label
+    else:
+        base = label
+
+    rpr = None
+    if paragraph.runs:
+        try:
+            rpr = deepcopy(paragraph.runs[0]._r.get_or_add_rPr())
+        except Exception:
+            rpr = None
+
+    for run in list(paragraph.runs):
+        paragraph._p.remove(run._r)
+
+    r1 = paragraph.add_run(base.strip())
+    r2 = paragraph.add_run(" " + value)
+
+    # تكبير وتغليظ القيمة المدخلة فقط
+    try:
+        from docx.shared import Pt
+
+        font_sizes = {
+            "العدد": 14,
+            "المرشد": 14,
+            "الهاتف": 14,
+            "التصريح": 14,
+            "البرنامج": 13,
+            "السائق": 14,
+            "رقم الهاتف": 14,
+            "شركة النقل": 13,
+            "رقم السيارة": 13,
+        }
+
+        if label in font_sizes:
+            r2.font.size = Pt(font_sizes[label])
+            r2.bold = True
+    except Exception:
+        pass
+
+    # Increase ONLY the inserted value text.
+    # Original labels, cells, borders and layout remain unchanged.
+    try:
+        from docx.shared import Pt
+
+        font_sizes = {
+            "العدد": 14,
+            "المرشد": 14,
+            "الهاتف": 14,
+            "التصريح": 14,
+            "البرنامج": 13,
+            "السائق": 14,
+            "رقم الهاتف": 14,
+            "شركة النقل": 13,
+            "رقم السيارة": 13,
+        }
+
+        if label in font_sizes:
+            r2.font.size = Pt(font_sizes[label])
+    except Exception:
+        pass
+
+
+    if rpr is not None:
+        try:
+            r1._r.get_or_add_rPr().append(deepcopy(rpr))
+            r2._r.get_or_add_rPr().append(deepcopy(rpr))
+        except Exception:
+            pass
+
+def _fill_transport_tables(doc, data):
+    """
+    Fill only the existing transport fields in the official template.
+    Tables 2, 6 and 10 are the three notification copies.
+    No new rows/cells/pages are created.
+    """
+    transport_tables = (2, 6, 10)
+
+    for ti in transport_tables:
+        if ti >= len(doc.tables):
+            continue
+
+        table = doc.tables[ti]
+
+        # Company name: label R0C0, value R0C1
+        company = str(data.get("transport_company", "") or "").strip()
+        if company and len(table.rows) > 0 and len(table.rows[0].cells) > 1:
+            replace_cell(table.cell(0, 1), company)
+
+        # Vehicle number: label R1C2, value R1C3
+        vehicle = str(data.get("vehicle_number", "") or "").strip()
+        if vehicle and len(table.rows) > 1 and len(table.rows[1].cells) > 3:
+            replace_cell(table.cell(1, 3), vehicle)
+
+        # Primary driver: label/value live in the same original cells.
+        driver = str(data.get("driver_name", "") or "").strip()
+        if driver and len(table.rows) > 3 and len(table.rows[3].cells) > 0:
+            _set_transport_cell(table.cell(3, 0), "السائق", driver)
+
+        # Driver phone: label/value live in the same original cell.
+        phone = str(data.get("driver_phone", "") or "").strip()
+        if phone and len(table.rows) > 3 and len(table.rows[3].cells) > 1:
+            _set_transport_cell(table.cell(3, 1), "الهاتف", phone)
 
 
 def fill_docx_template(template_path, data, output_path):
@@ -261,13 +425,13 @@ def fill_docx_template(template_path, data, output_path):
         t3 = doc.tables[base + 3]
 
         # Actual value cells in the approved notification templates.
-        replace_cell(t1.cell(1, 1), str(data["pax"]), 16, True)
-        replace_cell(t1.cell(2, 1), data["guide"], 14, True)
-        replace_cell(t1.cell(2, 3), data["phone"], 13, True)
+        _set_transport_cell(t1.cell(1, 1), "العدد", str(data["pax"]))
+        _set_transport_cell(t1.cell(2, 1), "المرشد", data["guide"])
+        _set_transport_cell(t1.cell(2, 3), "الهاتف", data["phone"])
 
         # Trip section: preserve the original table and checkbox positions.
-        replace_cell(t3.cell(0, 1), data["permit"], 14, True)
-        replace_cell(t3.cell(0, 4), data["program"], 11, True)
+        _set_transport_cell(t3.cell(0, 1), "التصريح", data["permit"])
+        _set_transport_cell(t3.cell(0, 4), "البرنامج", data["program"])
 
         direction = (
             "القاهرة"
@@ -300,6 +464,11 @@ def fill_docx_template(template_path, data, output_path):
             ("☑ " if checkpoint != "كمين الجونة" else "☐ ")
             + "كمين سفاجا - قنا       كمين مرسى علم - إدفو"
         )
+
+    _fill_transport_tables(doc, data)
+    # Apply the same approved transport-field method to all permit types.
+    # This keeps the original labels/cells and their formatting in all 3 notices.
+    _fill_transport_tables(doc, data)
 
     doc.save(str(output_path))
 
@@ -374,85 +543,83 @@ def overlay_legacy_notice_fields(c, data, w, h):
         draw_rtl(c, f"تحريراً في : {data['issue_date']}", w - 40, 358, 220, 8)
 
 
-def overlay_notice_fields(pdf_bytes, data):
+def _format_display_date(value):
+    """
+    Convert supported date formats to DD/MM/YYYY.
+    Examples:
+      2026-09-20 -> 20/09/2026
+      20092026   -> 20/09/2026
+      20/09/2026 -> 20/09/2026
+    """
+    value = str(value or "").strip()
+
+    if not value:
+        return ""
+
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if m:
+        y, mo, d = m.groups()
+        return f"{d}/{mo}/{y}"
+
+    m = re.fullmatch(r"(\d{2})(\d{2})(\d{4})", value)
+    if m:
+        d, mo, y = m.groups()
+        return f"{d}/{mo}/{y}"
+
+    m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", value)
+    if m:
+        return value
+
+    return value
+
+
+def _draw_bold_text(canvas_obj, text, x, y, size=12, align="right"):
+    """
+    Draw added fields in strong black bold text.
+    """
+    try:
+        canvas_obj.setFillColorRGB(0, 0, 0)
+        canvas_obj.setFont("ArabicBold", size)
+    except Exception:
+        # Fallback if ArabicBold is not registered in this version.
+        canvas_obj.setFillColorRGB(0, 0, 0)
+        canvas_obj.setFont("Helvetica-Bold", size)
+
+    if align == "right":
+        canvas_obj.drawRightString(x, y, str(text))
+    else:
+        canvas_obj.drawString(x, y, str(text))
+
+
+def overlay_notice_fields(pdf_bytes, data, legacy=None):
     src = PdfReader(io.BytesIO(pdf_bytes))
     out = PdfWriter()
 
-    is_hg = data.get("permit_key") == "hurghada"
-
-    for page_no, page in enumerate(src.pages[:3], 1):
+    for page in src.pages[:3]:
         ov = io.BytesIO()
         c = canvas.Canvas(ov, pagesize=A4)
 
-        # =========================================================
-        # Memory Trip Tours - Hurghada transfer
-        # Preserve the original PDF completely and only add values
-        # into the blank/value areas.
-        # =========================================================
-        if is_hg:
-            c.setFillColorRGB(0, 0, 0)
+        # رقم الملف: أعلى اليمين فقط
+        c.setFont("Latin", 11)
+        c.drawRightString(575, 806, str(data["file_no"]))
 
-            # Common header
-            c.setFont("Latin", 9)
-            c.drawRightString(575, 738, str(data.get("file_no", "")))
-            c.drawString(60, 738, str(data.get("trip_date", "")))
+        # تاريخ الرحلة: أعلى اليسار
+        c.setFont("Latin", 9)
+        c.drawString(28, 806, str(data["trip_date"]))
 
-            if page_no == 1:
-                # العدد
-                draw_rtl(c, str(data.get("pax", "")), 205, 145, 55, 11, True)
-
-                # اسم المرشد
-                draw_rtl(c, str(data.get("guide", "")), 205, 130, 160, 9, False)
-
-                # الهاتف
-                draw_rtl(c, str(data.get("phone", "")), 205, 115, 150, 9, False)
-
-                # نوع التصريح
-                draw_rtl(c, "توصيلة الغردقة", 205, 100, 160, 9, True)
-
-                # البرنامج
-                draw_rtl(c, str(data.get("program", "")), 205, 84, 180, 8, False)
-
-            elif page_no in (2, 3):
-                # بيانات شركة السياحة
-                draw_rtl(c, str(data["company"]["name"]), 515, 653, 260, 10, True)
-                draw_rtl(c, str(data.get("pax", "")), 535, 620, 60, 10, True)
-
-                # المرشد
-                draw_rtl(c, str(data.get("guide", "")), 450, 608, 220, 9, False)
-
-                # تليفون المرشد
-                draw_rtl(c, str(data.get("phone", "")), 195, 608, 150, 9, False)
-
-                # نوع التصريح
-                draw_rtl(c, "توصيلة الغردقة", 500, 574, 190, 9, True)
-
-                # البرنامج
-                draw_rtl(c, str(data.get("program", "")), 245, 458, 235, 8, False)
-
-                # الفندق
-                if data.get("hotel_to"):
-                    draw_rtl(c, str(data["hotel_to"]), 245, 430, 235, 8, False)
-
-                # checkpoint / route information
-                draw_rtl(c, "الأقصر ← الغردقة", 500, 414, 190, 9, True)
-
-        else:
-            # Existing behavior for all other permit types
-            c.setFont("Latin", 9)
-            c.drawRightString(575, 738, data["file_no"])
-            c.drawString(60, 738, data["trip_date"])
-            draw_rtl(
-                c,
-                f"تحريراً في : {data['issue_date']}",
-                205,
-                150,
-                160,
-                8
-            )
+        # تاريخ التحرير
+        draw_rtl(
+            c,
+            f"تحريراً في : {data['issue_date']}",
+            205,
+            150,
+            160,
+            8
+        )
 
         c.save()
         ov.seek(0)
+
         page.merge_page(PdfReader(ov).pages[0])
         out.add_page(page)
 
@@ -460,6 +627,7 @@ def overlay_notice_fields(pdf_bytes, data):
     out.write(buf)
     buf.seek(0)
     return buf
+
 
 def build_notices(data, workdir):
     key = (data["company_key"], data["permit_key"])
@@ -474,19 +642,137 @@ def build_notices(data, workdir):
         return overlay_notice_fields(raw, data, legacy=False)
     if key in LEGACY_PDF_TEMPLATES and LEGACY_PDF_TEMPLATES[key].exists():
         raw = LEGACY_PDF_TEMPLATES[key].read_bytes()
-        return overlay_notice_fields(raw, data, legacy=True)
+        return overlay_notice_fields(raw, data, legacy=False)
     raise ValueError("لا توجد استمارة رسمية معتمدة لهذا النوع في مجلد stamps/assets.")
 
 
-def make_room_page(data, rows, copy_no):
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
+def render_raw_rooming_pdf(excel_bytes, workdir):
+    '''
+    Render the uploaded Excel rooming list as a PDF using LibreOffice.
+
+    No column meaning is interpreted:
+    - no translation
+    - no renaming
+    - no Surname/Given-name reconstruction
+    - no date normalization
+    - no passport-number parsing
+    - no semantic aliases
+
+    Only temporary print settings are applied to a temporary copy so the
+    visible room-list area fits on one A4 page. The uploaded file itself
+    is never modified.
+    '''
+    workdir = Path(workdir)
+    src = workdir / "rooming_source.xlsx"
+    src.write_bytes(excel_bytes)
+
+    try:
+        wb = load_workbook(str(src), data_only=False)
+        ws = wb.active
+    except Exception as exc:
+        raise ValueError(f"تعذر فتح ملف النيم ليست Excel: {exc}")
+
+    first_row = None
+    last_row = 0
+    last_col = 0
+
+    for row in ws.iter_rows():
+        nonempty = 0
+        row_no = row[0].row if row else 0
+
+        for cell in row:
+            if cell.value not in (None, ""):
+                nonempty += 1
+                last_col = max(last_col, cell.column)
+
+        if nonempty:
+            last_row = max(last_row, row_no)
+
+        if first_row is None and nonempty >= 2:
+            first_row = row_no
+
+    if first_row is None:
+        first_row = 1
+
+    if last_row < first_row or last_col < 1:
+        raise ValueError("ملف النيم ليست فارغ أو لا يحتوي بيانات.")
+
+    from openpyxl.utils import get_column_letter
+    ws.print_area = f"A{first_row}:{get_column_letter(last_col)}{last_row}"
+
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    from openpyxl.worksheet.page import PageMargins
+    ws.page_margins = PageMargins(
+        left=0.10,
+        right=0.10,
+        top=1.55,
+        bottom=0.42,
+        header=0.03,
+        footer=0.03,
+    )
+    ws.print_options.horizontalCentered = True
+
+    temp_xlsx = workdir / "rooming_render.xlsx"
+    wb.save(str(temp_xlsx))
+
+    soffice = shutil.which("libreoffice") or shutil.which("soffice")
+    if not soffice:
+        raise RuntimeError("LibreOffice غير مثبت على الخادم.")
+
+    result = subprocess.run(
+        [
+            soffice,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(workdir),
+            str(temp_xlsx),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=90,
+        text=True,
+    )
+
+    pdf_path = workdir / "rooming_render.pdf"
+    if not pdf_path.exists():
+        raise RuntimeError(
+            "فشل تحويل النيم ليست إلى PDF: "
+            + (result.stderr or result.stdout or "")
+        )
+
+    pdf_bytes = pdf_path.read_bytes()
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    if len(reader.pages) < 1:
+        raise ValueError("ملف النيم ليست لم ينتج صفحة صالحة.")
+
+    return pdf_bytes
+
+
+def make_room_page(data, rooming_pdf_bytes, copy_no):
+    '''
+    Fixed approved header + original Excel room-list rendering + declaration.
+    The source room-list page is placed underneath without translating or
+    rebuilding its cells.
+    '''
+    src_reader = PdfReader(io.BytesIO(rooming_pdf_bytes))
+    if not src_reader.pages:
+        raise ValueError("لا توجد صفحة روم ليست صالحة.")
+
+    src_page = src_reader.pages[0]
+
+    overlay_buf = io.BytesIO()
+    c = canvas.Canvas(overlay_buf, pagesize=A4)
     W, H = A4
-
     BLACK = colors.black
-    WHITE = colors.white
 
-    # العنوان
     c.setFillColor(BLACK)
     draw_rtl(
         c,
@@ -494,13 +780,10 @@ def make_room_page(data, rows, copy_no):
         W - 28, H - 32, 400, 16, True
     )
 
-    c.setFillColor(BLACK)
     c.setFont("Latin", 8)
     copies = 1 if data.get("permit_key") == "hurghada" else 3
     c.drawString(28, H - 32, f"Copy {copy_no}/{copies}")
 
-    # الشركة ورقم الملف والعدد
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         f"{data['company']['english']} | "
@@ -509,32 +792,24 @@ def make_room_page(data, rows, copy_no):
         W - 28, H - 52, 520, 8
     )
 
-    # المرشد والتليفون - كبير وواضح
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         f"المرشد: {data['guide']}   الهاتف: {data['phone']}",
         W - 28, H - 70, 520, 11, True
     )
 
-    # التاريخ - كبير وواضح
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         f"تاريخ الرحلة: {data['trip_date']}",
         W - 28, H - 88, 250, 12, True
     )
 
-    # نوع التصريح - أكبر وBold
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         data["permit"],
         300, H - 88, 250, 13, True
     )
 
-    # الفنادق
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         (
@@ -545,105 +820,6 @@ def make_room_page(data, rows, copy_no):
         W - 28, H - 103, 520, 8
     )
 
-    # جدول النيم ليست
-    headers = [
-        "م",
-        "الاسم بالصيني",
-        "الاسم بالإنجليزي",
-        "النوع",
-        "تاريخ الميلاد",
-        "رقم الجواز",
-        "انتهاء الجواز",
-        "الغرفة",
-        "ملاحظات"
-    ]
-
-    widths = [22, 92, 100, 34, 65, 74, 65, 45, 55]
-
-    total = sum(widths)
-    x0 = (W - total) / 2
-    top = H - 120
-    available = top - 52
-
-    if len(rows) > 38:
-        raise ValueError(
-            "عدد الأسماء كبير جداً لصفحة نيم ليست واحدة."
-        )
-
-    rh = max(
-        10.0,
-        min(19.0, available / max(len(rows) + 1, 1))
-    )
-
-    header_font = max(4.8, min(6.2, rh * 0.32))
-    body_font = max(4.5, min(5.5, rh * 0.29))
-
-    # Header أبيض + حدود سوداء
-    x = x0
-
-    for h, w in zip(headers, widths):
-        c.setFillColor(WHITE)
-        c.setStrokeColor(BLACK)
-        c.setLineWidth(.35)
-        c.rect(x, top-rh, w, rh, stroke=1, fill=1)
-
-        c.setFillColor(BLACK)
-        c.setFont("ArabicBold", header_font)
-        c.drawCentredString(
-            x + w/2,
-            top - (rh * 0.68),
-            ar(h)
-        )
-
-        x += w
-
-    # الصفوف
-    y = top - rh
-
-    for r in rows:
-        x = x0
-
-        vals = [
-            r.get("ID", ""),
-            r.get("Chinese name", ""),
-            r.get("English name", ""),
-            r.get("Sex", ""),
-            r.get("DOB", ""),
-            r.get("Passport", ""),
-            r.get("Expiry", ""),
-            r.get("Room", ""),
-            r.get("Note", "")
-        ]
-
-        for j, (v, w) in enumerate(zip(vals, widths)):
-            c.setFillColor(WHITE)
-            c.setStrokeColor(BLACK)
-            c.setLineWidth(.35)
-            c.rect(x, y-rh, w, rh, stroke=1, fill=1)
-
-            c.setFillColor(BLACK)
-
-            if j == 1:
-                c.setFont("STSong-Light", body_font)
-            else:
-                c.setFont("Latin", body_font)
-
-            text_value = str(v or "")
-            c.drawCentredString(
-                x + w/2,
-                y - (rh * 0.68),
-                text_value[:24]
-            )
-
-            x += w
-
-        y -= rh
-
-        if y < 50:
-            break
-
-    # الإقرار
-    c.setFillColor(BLACK)
     draw_rtl(
         c,
         f"إقرار من الشركة: نقر نحن شركة "
@@ -653,6 +829,16 @@ def make_room_page(data, rows, copy_no):
     )
 
     c.save()
+    overlay_buf.seek(0)
+    overlay_page = PdfReader(overlay_buf).pages[0]
+
+    src_page.merge_page(overlay_page)
+
+    out = PdfWriter()
+    out.add_page(src_page)
+
+    buf = io.BytesIO()
+    out.write(buf)
     buf.seek(0)
     return buf
 
@@ -799,90 +985,176 @@ def rooming_template():
 
 
 @app.post("/api/preview-rooming")
+@app.post("/api/preview-rooming")
 def preview_rooming():
     try:
+        room = request.files.get("rooming")
         if not room or not room.filename:
             raise ValueError("ارفع ملف النيم ليست Excel")
-        rows = read_rooming(io.BytesIO(room.read()))
-        preview = []
-        for r in rows:
-            preview.append({
-                "id": r.get("ID", ""),
-                "chinese": r.get("Chinese name", ""),
-                "english": r.get("English name", ""),
-                "sex": r.get("Sex", ""),
-                "dob": r.get("DOB", ""),
-                "passport": r.get("Passport", ""),
-                "expiry": r.get("Expiry", ""),
-                "room": r.get("Room", ""),
-                "note": r.get("Note", ""),
-            })
-        return jsonify(ok=True, count=len(preview), rows=preview)
+
+        raw = room.read()
+        if not raw:
+            raise ValueError("ملف النيم ليست فارغ.")
+
+        wb = load_workbook(io.BytesIO(raw), data_only=False, read_only=True)
+        ws = wb.active
+
+        nonempty_rows = 0
+        for row in ws.iter_rows(values_only=True):
+            if any(v not in (None, "") for v in row):
+                nonempty_rows += 1
+
+        return jsonify(
+            ok=True,
+            count=nonempty_rows,
+            rows=[],
+            raw_copy=True,
+        )
+
     except Exception as e:
         return jsonify(error=str(e)), 400
 
 
+@app.post("/api/generate")
 @app.post("/api/generate")
 def generate():
     try:
         f = request.form
         company_key = f.get("company", "unlimited")
         permit_key = f.get("permit", "cairo")
+
         if company_key not in COMPANIES or permit_key not in ALLOWED[company_key]:
             raise ValueError("الشركة أو نوع التصريح غير صحيح")
+
         pax_raw = str(f.get("pax", "")).strip()
         pax = int(pax_raw) if pax_raw.isdigit() else 0
+
         file_no = f.get("file_no", "").strip()
         guide = f.get("guide", "").strip()
         phone = f.get("phone", "").strip()
+
         trip = fmt_date(f.get("trip_date", ""))
         issue = fmt_date(f.get("issue_date", ""))
-        program = f.get("program", "").strip() or PROGRAM_PRESETS.get((company_key, permit_key), "")
+
+        program = (
+            f.get("program", "").strip()
+            or PROGRAM_PRESETS.get((company_key, permit_key), "")
+        )
+
         hotel_to = f.get("hotel_to", "").strip()
         if hotel_to and hotel_to not in program:
-            program = program.rstrip(' -–—') + ' – ' + hotel_to
+            program = program.rstrip(" -–—") + " – " + hotel_to
+
         if not file_no or not guide or not trip or not program:
             raise ValueError("أكمل رقم الملف والمرشد وتاريخ الرحلة والبرنامج")
+
         room_shot = request.files.get("rooming_img")
         room = request.files.get("rooming")
+        rooming_excel_bytes = None
 
         if permit_key == "hurghada":
-            # Memory Hurghada uses the uploaded rooming-list screenshot.
             if not room_shot or not room_shot.filename:
                 raise ValueError("ارفع سكرين النيم ليست للغردقة")
-            rows = []
         else:
-            # Cairo/Luxor continue to use the Excel rooming list.
             if not room or not room.filename:
                 raise ValueError("ارفع ملف النيم ليست Excel")
-            rows = read_rooming(io.BytesIO(room.read()))
-            if len(rows) != pax:
-                raise ValueError(
-                    f"العدد المعلن {pax} لا يساوي عدد الأسماء في النيم ليست ({len(rows)})"
-                )
+
+            rooming_excel_bytes = room.read()
+            if not rooming_excel_bytes:
+                raise ValueError("ملف النيم ليست فارغ.")
 
         program_file = request.files.get("program_image")
-        program_bytes = program_file.read() if program_file and program_file.filename else None
+        program_bytes = (
+            program_file.read()
+            if program_file and program_file.filename
+            else None
+        )
+
         extra_file = request.files.get("extra_page")
         company = COMPANIES[company_key]
-        data = {"company": company, "company_key": company_key, "permit_key": permit_key, "permit": PERMITS[permit_key], "file_no": file_no, "pax": pax, "guide": guide, "phone": phone, "trip_date": trip, "issue_date": issue, "program": program, "hotel_from": f.get("hotel_from", "").strip(), "hotel_to": hotel_to}
-        with tempfile.TemporaryDirectory() as td:
+
+        data = {
+            "company": company,
+            "company_key": company_key,
+            "permit_key": permit_key,
+            "permit": PERMITS[permit_key],
+            "file_no": file_no,
+            "pax": pax,
+            "guide": guide,
+            "phone": phone,
+            "trip_date": trip,
+            "issue_date": issue,
+            "program": program,
+            "hotel_from": f.get("hotel_from", "").strip(),
+            "hotel_to": hotel_to,
+            "transport_company": f.get("transport_company", "").strip(),
+            "vehicle_number": f.get("vehicle_number", "").strip(),
+            "driver_name": f.get("driver_name", "").strip(),
+            "driver_phone": f.get("driver_phone", "").strip(),
+        }
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             notices = build_notices(data, td)
+
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", file_no) or "permit"
-            suffix = {"cairo":"cairo_transfer","luxor_transfer":"luxor_transfer","luxor_overnight":"luxor_overnight","hurghada":"hurghada_transfer"}[permit_key]
+            suffix = {
+                "cairo": "cairo_transfer",
+                "luxor_transfer": "luxor_transfer",
+                "luxor_overnight": "luxor_overnight",
+                "hurghada": "hurghada_transfer",
+            }[permit_key]
+
             main_name = f"{safe}_{suffix}.pdf"
+
             if permit_key == "hurghada":
                 if not program_bytes:
-                    raise ValueError("ارفع صورة إدارة البرامج. ملف الغردقة لازم 7 ورقات")
+                    raise ValueError(
+                        "ارفع صورة إدارة البرامج. ملف الغردقة لازم 7 ورقات"
+                    )
                 if not extra_file or not extra_file.filename:
-                    raise ValueError("ارفع الورقة الإضافية. ملف الغردقة لازم 7 ورقات")
+                    raise ValueError(
+                        "ارفع الورقة الإضافية. ملف الغردقة لازم 7 ورقات"
+                    )
+
                 extra_pdf = extra_page_from_upload(extra_file)
                 police_pdf = build_police_pdf(data, td)
-                room_one = make_room_shot_page(room_shot.read()) if room_shot else make_room_page(data, rows, 1)
-                final = merge_hurghada_pages(notices, room_one, program_bytes, police_pdf, extra_pdf)
+
+                room_one = (
+                    make_room_shot_page(room_shot.read())
+                    if room_shot
+                    else None
+                )
+
+                final = merge_hurghada_pages(
+                    notices,
+                    room_one,
+                    program_bytes,
+                    police_pdf,
+                    extra_pdf,
+                )
+
             else:
-                room_pages = [make_room_page(data, rows, i) for i in range(1, 4)]
-                final = merge_pages(notices, room_pages, program_bytes)
-            return send_file(final, mimetype="application/pdf", as_attachment=True, download_name=main_name)
+                rooming_pdf_bytes = render_raw_rooming_pdf(
+                    rooming_excel_bytes, td
+                )
+
+                room_pages = [
+                    make_room_page(data, rooming_pdf_bytes, i)
+                    for i in range(1, 4)
+                ]
+
+                final = merge_pages(
+                    notices,
+                    room_pages,
+                    program_bytes,
+                )
+
+            return send_file(
+                final,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=main_name,
+            )
+
     except Exception as e:
         return jsonify(error=str(e)), 400

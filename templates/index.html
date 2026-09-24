@@ -1,24 +1,660 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>تصاريح النقل السياحي</title><link rel="stylesheet" href="/static/app.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>تصاريح النقل السياحي</title><link rel="stylesheet" href="/static/app.css">
+<style>
+.history-item{
+  width:100%;
+  text-align:right;
+  direction:rtl;
+  cursor:pointer;
+  padding:10px;
+  margin:4px 0;
+  border:1px solid #ccc;
+  border-radius:8px;
+  background:#fff;
+  color:#111;
+  font-size:15px;
+}
+.history-item:hover{
+  background:#f2f2f2;
+}
+</style>
+
+<style id="history964Style">
+#historyBox{
+  margin-top:20px;
+}
+
+#historyBox h2{
+  font-weight:800;
+}
+
+#history{
+  list-style:none;
+  padding:0;
+  margin:10px 0;
+}
+
+.history-card{
+  display:block;
+  background:#fff;
+  border:2px solid #bbb;
+  border-radius:10px;
+  padding:12px;
+  margin:8px 0;
+  direction:rtl;
+  text-align:right;
+}
+
+.history-title{
+  font-size:17px;
+  font-weight:800;
+  color:#111;
+  margin-bottom:5px;
+}
+
+.history-info{
+  font-size:14px;
+  color:#333;
+  margin-bottom:10px;
+}
+
+.history-open{
+  width:100%;
+  padding:11px;
+  border:0;
+  border-radius:8px;
+  cursor:pointer;
+  font-size:15px;
+  font-weight:800;
+  background:#eee;
+  color:#111;
+}
+
+.history-open:active{
+  transform:scale(.99);
+}
+
+.history-empty{
+  padding:12px;
+  text-align:center;
+  direction:rtl;
+}
+</style>
+</head>
 <body><main class="shell"><section class="card"><header><h1>مولّد تصاريح النقل السياحي</h1><p>إنشاء ملف PDF رسمي من 7 صفحات باستخدام الاستمارات المعتمدة.</p></header>
 <form id="permitForm" enctype="multipart/form-data">
-<div class="section"><h2>الأساسيات</h2><div class="grid">
+<div class="section">
+<h2>الأساسيات</h2>
+<div class="quick" id="quickBtns"></div>
+<div class="grid">
 <label>الشركة<select name="company" id="company"><option value="unlimited">ان ليميتد ايجيبت ترافيل — 2257</option><option value="memory">ميمورى تريب تورز — 1586</option></select></label>
 <label>نوع التصريح<select name="permit" id="permit"></select></label>
 <label>رقم الملف<input name="file_no" placeholder="CH202609-14GZL" required></label>
-<label>العدد<input name="pax" type="number" min="1" required></label>
-</div></div>
+<input type="hidden" id="manualPax" name="manual_pax" value=""><label>العدد<input name="pax" id="pax" type="number" min="1" placeholder="بيتحسب من الإكسل"></label>
+</div>
+<p class="hint" id="hurghadaNote" hidden>الغردقة: 7 ورقات في PDF واحد — 3 إخطارات + روم ليست واحدة + إدارة البرامج + إخطار شرطة الأقصر + الورقة الإضافية.</p>
+</div>
 <div class="section"><h2>المرشد والتواريخ</h2><div class="grid">
-<label>اسم المرشد الكامل<input name="guide" required></label><label>هاتف المرشد<input name="phone"></label>
-<label>تاريخ الرحلة<input name="trip_date" type="date" required></label><label>تحريراً في<input name="issue_date" type="date"></label>
-</div></div>
-<div class="section"><h2>البرنامج والفنادق</h2><label>البرنامج / أماكن الإقامة<textarea name="program" rows="3" required placeholder="زعفرانه – خان – ازهر – مصر القديمه – عشاء – الفندق"></textarea></label><div class="grid"><label>فندق الانطلاق<input name="hotel_from"></label><label>فندق الوصول<input name="hotel_to"></label></div></div>
-<div class="section"><h2>المرفقات</h2><div class="grid"><label>النيم ليست Excel<input name="rooming" type="file" accept=".xlsx,.xls" required></label><label>صورة إدارة البرامج <small>(اختياري؛ بدونها الناتج 6 صفحات)</small><input name="program_image" type="file" accept="image/*"></label></div></div>
-<button id="submitBtn" type="submit">إنشاء PDF النهائي</button><div id="status" role="status"></div></form></section></main>
+<label>اسم المرشد الكامل<input name="guide" id="guide" list="guideList" required></label>
+<label>هاتف المرشد<input name="phone" id="phone" list="phoneList"></label>
+<label>تاريخ الرحلة<input name="trip_date" type="date" required></label>
+<label>تحريراً في<input name="issue_date" type="date"></label>
+</div>
+<datalist id="guideList"></datalist><datalist id="phoneList"></datalist>
+</div>
+<div class="section"><h2>البرنامج والفنادق</h2>
+<label>البرنامج / أماكن الإقامة<textarea name="program" rows="3" required placeholder="زعفرانه – خان – ازهر – مصر القديمه – عشاء – الفندق"></textarea></label>
+<div class="grid">
+<label>فندق الانطلاق<input name="hotel_from" id="hotel_from" list="hotelFromList"></label>
+<label>فندق الوصول<input name="hotel_to" id="hotel_to" list="hotelToList"></label>
+</div>
+<datalist id="hotelFromList"></datalist><datalist id="hotelToList"></datalist>
+</div>
+
+<div class="section" id="transportSection">
+  <h2>بيانات النقل</h2>
+  <p style="margin:0 0 12px;color:#777;font-size:14px;">
+    هذه البيانات اختيارية. اترك الحقول فارغة إذا لم تكن متوفرة.
+  </p>
+
+  <div class="grid">
+    <label>
+      شركة النقل
+      <input name="transport_company" id="transport_company"
+             placeholder="مثال: ميد إيجيبت للنقل السياحي">
+    </label>
+
+    <label>
+      رقم العربية
+      <input name="vehicle_number" id="vehicle_number"
+             placeholder="مثال: EG 1234">
+    </label>
+
+    <label>
+      اسم السائق
+      <input name="driver_name" id="driver_name"
+             placeholder="اسم السائق">
+    </label>
+
+    <label>
+      تليفون السائق
+      <input name="driver_phone" id="driver_phone"
+             inputmode="tel"
+             placeholder="رقم تليفون السائق">
+    </label>
+  </div>
+</div>
+
+<div class="section"><h2>المرفقات</h2>
+<p class="hint"><a href="/api/rooming-template">تنزيل نموذج النيم ليست Excel</a></p>
+<div class="grid">
+<label>النيم ليست Excel<input name="rooming" id="rooming" type="file" accept=".xlsx,.xls" required></label>
+<label id="roomShotRow" hidden>سكرين النيم ليست <small>للغردقة ميموري فقط — بدل الإكسل</small><input name="rooming_img" id="rooming_img" type="file" accept="image/*"></label>
+<label>صورة إدارة البرامج <small id="programHint">(اختياري لغير الغردقة)</small><input name="program_image" id="program_image" type="file" accept="image/*"></label>
+</div>
+<label id="extraRow" hidden>الورقة الإضافية <small>صورة أو PDF — صفحة واحدة تندرج آخر الملف</small><input name="extra_page" id="extra_page" type="file" accept="image/*"></label>
+<div id="previewWrap" hidden>
+<p id="previewMeta"></p>
+<div class="preview-scroll"><table id="previewTable"><thead><tr><th>م</th><th>الصيني</th><th>الإنجليزي</th><th>النوع</th><th>الميلاد</th><th>الجواز</th><th>الانتهاء</th><th>الغرفة</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+<button id="submitBtn" type="submit">إنشاء PDF النهائي</button><div id="status" role="status"></div>
+</form>
+<div class="section" id="historyBox"><h2>آخر الملفات</h2><ul id="history"></ul></div>
+</section></main>
 <script>
 const company=document.getElementById('company'), permit=document.getElementById('permit');
-const options={unlimited:[['cairo','توصيلة القاهرة'],['luxor_transfer','توصيلة الأقصر'],['luxor_overnight','مبيت الأقصر']],memory:[['cairo','توصيلة القاهرة'],['luxor_transfer','توصيلة الأقصر'],['luxor_overnight','مبيت الأقصر'],['hurghada','توصيلة الغردقة']]};
-function refresh(){permit.innerHTML=options[company.value].map(([v,t])=>`<option value="${v}">${t}</option>`).join('')} company.addEventListener('change',refresh); refresh();
-document.getElementById('permitForm').addEventListener('submit',async e=>{e.preventDefault();const b=document.getElementById('submitBtn'),s=document.getElementById('status');b.disabled=true;s.textContent='جاري تجهيز الاستمارات والتحقق من الصفحات...';try{const r=await fetch('/api/generate',{method:'POST',body:new FormData(e.target)});if(!r.ok){const j=await r.json();throw new Error(j.error||'حدث خطأ')}const blob=await r.blob();const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${e.target.file_no.value}_${permit.value}.pdf`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);s.textContent='تم إنشاء الملف وتنزيله.'}catch(err){s.textContent=err.message}finally{b.disabled=false}});
-</script></body></html>
+const program=document.querySelector('textarea[name="program"]');
+const pax=document.getElementById('pax');
+const options={
+unlimited:[
+ ['cairo','توصيلة القاهرة'],
+ ['luxor_transfer','توصيلة الأقصر'],
+ ['luxor_overnight','مبيت الأقصر']
+],
+memory:[
+ ['cairo','توصيلة القاهرة'],
+ ['luxor_transfer','توصيلة الأقصر'],
+ ['luxor_overnight','مبيت الأقصر'],
+ ['hurghada','توصيلة الغردقة']
+]
+};
+const programs={
+  unlimited:{cairo:'زعفرانه – خان – ازهر – مصر القديمه – عشاء',luxor_transfer:'85 – دندره – ملوك – ممنون – مرسي سياحي',luxor_overnight:'85 – دندره – ملوك – ممنون – مرسي سياحي'},
+  memory:{cairo:'زعفرانه – خان – ازهر – مصر القديمه – عشاء',luxor_transfer:'85 – دندره – ملوك – ممنون – مرسي سياحي',luxor_overnight:'85 – دندره – ملوك – ممنون – مرسي سياحي',hurghada:'دندره 85'}
+};
+const MEM_KEY='tasare7_memory_v2';
+const HIS_KEY='tasare7_history_v2';
+function loadMem(){try{return JSON.parse(localStorage.getItem(MEM_KEY)||'{}')}catch(e){return {}}}
+function saveMem(p){localStorage.setItem(MEM_KEY, JSON.stringify(p))}
+function uniq(arr){return [...new Set((arr||[]).filter(Boolean))].slice(0,12)}
+function fillList(id, items){document.getElementById(id).innerHTML=uniq(items).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}
+function applyMemory(){
+  const m=loadMem();
+  fillList('guideList', m.guides);
+  fillList('phoneList', m.phones);
+  fillList('hotelFromList', m.hotelsFrom);
+  fillList('hotelToList', m.hotelsTo);
+  if(m.lastCompany) company.value=m.lastCompany;
+  if(m.lastGuide && !document.getElementById('guide').value) document.getElementById('guide').value=m.lastGuide;
+  if(m.lastPhone && !document.getElementById('phone').value) document.getElementById('phone').value=m.lastPhone;
+}
+function rememberCurrent(){
+  const m=loadMem();
+  m.guides=uniq([document.getElementById('guide').value, ...(m.guides||[])]);
+  m.phones=uniq([document.getElementById('phone').value, ...(m.phones||[])]);
+  m.hotelsFrom=uniq([document.getElementById('hotel_from').value, ...(m.hotelsFrom||[])]);
+  m.hotelsTo=uniq([document.getElementById('hotel_to').value, ...(m.hotelsTo||[])]);
+  m.lastCompany=company.value;
+  m.lastGuide=document.getElementById('guide').value;
+  m.lastPhone=document.getElementById('phone').value;
+  saveMem(m);
+  applyMemory();
+}
+function loadHistory(){
+  let items=[];
+  try{
+    items=JSON.parse(localStorage.getItem(HIS_KEY)||'[]');
+  }catch(e){
+    items=[];
+  }
+
+  const ul=document.getElementById('history');
+  if(!ul) return;
+
+  ul.innerHTML='';
+
+  if(!items.length){
+    ul.innerHTML='<li class="history-empty">لا توجد تصاريح محفوظة حتى الآن</li>';
+    return;
+  }
+
+  items.slice(0,30).forEach((x,i)=>{
+    const li=document.createElement('li');
+    li.className='history-card';
+
+    const title=document.createElement('div');
+    title.className='history-title';
+
+    title.textContent =
+      `${x.file_no || x.file || ''} — ${x.company || ''}`;
+
+    const info=document.createElement('div');
+    info.className='history-info';
+
+    info.textContent =
+      `${x.permit || ''} | ${x.trip_date || x.date || ''} | ${x.pax || ''} سائح`;
+
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='history-open';
+    btn.textContent='فتح التصريح وتعديل البيانات';
+
+    btn.addEventListener('click',function(){
+      loadHistoryItem(i);
+    });
+
+    li.appendChild(title);
+    li.appendChild(info);
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
+}
+
+function loadHistoryItem(index){
+  let items=[];
+  try{
+    items=JSON.parse(localStorage.getItem(HIS_KEY)||'[]');
+  }catch(e){
+    items=[];
+  }
+
+  const x=items[index];
+
+tasare7RestoreAttachments(x).catch(err=>{
+  console.error('TASARE7_ATTACHMENT_RESTORE_ERROR',err);
+});
+
+  if(!x){
+    alert('التصريح المحفوظ غير موجود');
+    return;
+  }
+
+  const setValue=(id,value)=>{
+    const el=document.getElementById(id);
+    if(el && value !== undefined && value !== null)
+      el.value=value;
+  };
+
+  // الشركة
+  if(x.companyKey){
+    company.value=x.companyKey;
+    refresh(true);
+  }
+
+  // باقي البيانات
+  setValue('file_no', x.file_no || x.file || '');
+  setValue('pax', x.pax || '');
+  setValue('manualPax', x.pax || '');
+  setValue('guide', x.guide || '');
+  setValue('phone', x.phone || '');
+  setValue('hotel_from', x.hotel_from || '');
+  setValue('hotel_to', x.hotel_to || '');
+
+  const trip=document.querySelector('[name="trip_date"]');
+  if(trip) trip.value=x.trip_date || x.date || '';
+
+  const issue=document.querySelector('[name="issue_date"]');
+  if(issue) issue.value=x.issue_date || '';
+
+  // نوع التصريح
+  if(x.permitKey){
+    permit.value=x.permitKey;
+    refresh(true);
+  }
+
+  // البرنامج
+  if(x.program !== undefined){
+    program.value=x.program || '';
+  }
+
+  syncChurgada();
+
+  // لا ننقل بيانات النقل من التصريح القديم
+  const transportIds=[
+    'transport_company',
+    'vehicle_number',
+    'driver_name',
+    'driver_phone'
+  ];
+
+  transportIds.forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.value='';
+  });
+
+  // نرجع لأعلى الفورم
+  window.scrollTo({
+    top:0,
+    behavior:'smooth'
+  });
+
+  const status=document.getElementById('status');
+  if(status){
+    status.textContent='تم فتح التصريح المحفوظ. يمكنك الآن تغيير الاتجاه والبرنامج وإصدار تصريح جديد.';
+  }
+}
+
+function pushHistory(row){
+  let items=[];
+  try{
+    items=JSON.parse(localStorage.getItem(HIS_KEY)||'[]');
+  }catch(e){
+    items=[];
+  }
+
+  // منع تكرار نفس التصريح
+  items=items.filter(x =>
+    !(
+      x.file_no === row.file_no &&
+      x.companyKey === row.companyKey &&
+      x.trip_date === row.trip_date
+    )
+  );
+
+  items.unshift({
+    file_no: row.file_no || '',
+    file: row.file_no || '',
+
+    company: row.company || '',
+    companyKey: row.companyKey || '',
+
+    permit: row.permit || '',
+    permitKey: row.permitKey || '',
+
+    trip_date: row.trip_date || '',
+    issue_date: row.issue_date || '',
+
+    pax: row.pax || '',
+    guide: row.guide || '',
+    phone: row.phone || '',
+
+    hotel_from: row.hotel_from || '',
+    hotel_to: row.hotel_to || '',
+
+    program: row.program || ''
+  });
+
+  localStorage.setItem(
+    HIS_KEY,
+    JSON.stringify(items.slice(0,30))
+  );
+
+  loadHistory();
+
+  // حفظ كل الملفات المرفقة للتصريح
+  tasare7SaveAttachments({
+    file_no: row.file_no || '',
+    companyKey: row.companyKey || '',
+    trip_date: row.trip_date || ''
+  }).catch(err => console.error('TASARE7_ATTACHMENT_SAVE_ERROR', err));
+}
+
+function todayISO(){const d=new Date();const off=d.getTimezoneOffset();const x=new Date(d.getTime()-off*60000);return x.toISOString().slice(0,10)}
+document.querySelector('[name="issue_date"]').value=todayISO();
+function syncHurghada(){
+  const isH=permit.value==='hurghada';
+  document.getElementById('hurghadaNote').hidden=!isH;
+  document.getElementById('extraRow').hidden=!isH;
+  document.getElementById('extra_page').required=isH;
+  document.getElementById('program_image').required=isH;
+  document.getElementById('programHint').textContent=isH?'إجباري في ملف الغردقة':'اختياري لغير الغردقة';
+}
+function refresh(keepPermit){
+  const current=keepPermit?permit.value:'';
+  permit.innerHTML=options[company.value].map(([v,t])=>`<option value="${v}">${t}</option>`).join('');
+  if(current && options[company.value].some(([v])=>v===current)) permit.value=current;
+  program.value=programs[company.value]?.[permit.value]||'';
+  syncHurghada();
+}
+company.addEventListener('change',()=>refresh(true));
+permit.addEventListener('change',()=>{ program.value=programs[company.value]?.[permit.value]||''; syncHurghada(); });
+applyMemory();
+refresh();
+document.getElementById('quickBtns').innerHTML=[
+  ['unlimited','cairo','قاهرة / ان ليميتد'],
+  ['unlimited','luxor_transfer','توصيلة أقصر / ان ليميتد'],
+  ['unlimited','luxor_overnight','مبيت أقصر / ان ليميتد'],
+  ['memory','cairo','قاهرة / ميمورى'],
+  ['memory','luxor_overnight','مبيت أقصر / ميمورى'],
+  ['memory','hurghada','غردقة + شرطة']
+].map(([c,p,l])=>`<button type="button" class="mini" data-c="${c}" data-p="${p}">${l}</button>`).join('');
+document.getElementById('quickBtns').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  company.value=b.dataset.c; refresh(); permit.value=b.dataset.p;
+  program.value=programs[company.value]?.[permit.value]||''; syncHurghada();
+});
+document.getElementById('rooming').addEventListener('change', async e=>{
+  const f=e.target.files[0];
+  const wrap=document.getElementById('previewWrap');
+  const meta=document.getElementById('previewMeta');
+  const tb=document.querySelector('#previewTable tbody');
+  const s=document.getElementById('status');
+  if(!f){wrap.hidden=true;return;}
+  const fd=new FormData(); fd.append('rooming', f);
+  try{
+    const r=await fetch('/api/preview-rooming',{method:'POST',body:fd});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'تعذر قراءة الإكسل');
+    /* لا يتم تعديل العدد تلقائيا من الروم ليست */
+    tb.innerHTML=j.rows.map(row=>`<tr><td>${row.id}</td><td>${row.chinese}</td><td>${row.english}</td><td>${row.sex}</td><td>${row.dob}</td><td>${row.passport}</td><td>${row.expiry}</td><td>${row.room}</td></tr>`).join('');
+    meta.textContent=`اتقرأ ${j.count} سائح من الملف. العدد اتحط أوتوماتيك.`;
+    wrap.hidden=false; s.textContent='';
+  }catch(err){ wrap.hidden=true; s.textContent=err.message; }
+});
+document.getElementById('permitForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const b=document.getElementById('submitBtn'),s=document.getElementById('status');
+  b.disabled=true; s.textContent='جاري تجهيز الاستمارات والتحقق من الصفحات...';
+  try{
+    rememberCurrent();
+    const fd=new FormData(e.target);
+const manualPax=document.getElementById('manualPax').value.trim() || document.getElementById('pax').value.trim();
+fd.set('pax',manualPax);
+const r=await fetch('/api/generate',{method:'POST',body:fd});
+    if(!r.ok){const t=await r.text();let j=null;try{j=JSON.parse(t)}catch(_){ }throw new Error((j&&j.error)||t||('خطأ HTTP '+r.status))}
+    const blob=await r.blob();
+    const base=`${e.target.file_no.value}_${permit.value}`;
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url; a.download=`${base}.pdf`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    pushHistory({
+  file_no:e.target.file_no.value || '',
+  company:company.options[company.selectedIndex].text || '',
+  companyKey:company.value || '',
+
+  permit:permit.options[permit.selectedIndex].text || '',
+  permitKey:permit.value || '',
+
+  trip_date:e.target.trip_date.value || '',
+  issue_date:e.target.issue_date.value || '',
+
+  pax:pax.value || '',
+  guide:document.getElementById('guide').value || '',
+  phone:document.getElementById('phone').value || '',
+
+  hotel_from:document.getElementById('hotel_from').value || '',
+  hotel_to:document.getElementById('hotel_to').value || '',
+
+  program:program.value || ''
+});
+    s.textContent='تم إنشاء ملف PDF من 7 ورقات وتنزيله.';
+  }catch(err){s.textContent=err.message}finally{b.disabled=false}
+});
+loadHistory();
+
+const roomInp=document.getElementById('rooming');
+const shotRow=document.getElementById('roomShotRow');
+const shotInp=document.getElementById('rooming_img');
+function syncRoomInputs(){
+  const hg=document.getElementById('permit').value==='hurghada';
+  const roomLabel=roomInp ? roomInp.closest('label') : null;
+
+  if(shotRow) shotRow.hidden=!hg;
+  if(roomLabel) roomLabel.hidden=hg;
+
+  if(hg){
+    if(roomInp){
+      roomInp.value='';
+      roomInp.required=false;
+    }
+  }else{
+    if(shotInp) shotInp.value='';
+    if(roomInp) roomInp.required=true;
+  }
+}
+document.getElementById('permit').addEventListener('change', syncRoomInputs);
+if(shotInp) shotInp.addEventListener('change', syncRoomInputs);
+syncRoomInputs();
+
+
+// MANUAL PAX LOCK
+(function(){
+  const pax = document.getElementById('pax');
+  const manual = document.getElementById('manualPax');
+  if (!pax || !manual) return;
+
+  function saveManualPax(){
+    if (pax.value.trim() !== '') {
+      manual.value = pax.value.trim();
+    }
+  }
+
+  pax.addEventListener('input', saveManualPax);
+  pax.addEventListener('change', saveManualPax);
+
+  const form = document.getElementById('permitForm');
+  if (form) {
+    form.addEventListener('submit', function(){
+      saveManualPax();
+    }, true);
+  }
+})();
+
+</script>
+<script>
+/* TASARE7_HISTORY_FILES_967 */
+
+const TASARE7_DB_NAME = 'tasare7_history_files_v1';
+const TASARE7_DB_VERSION = 1;
+const TASARE7_STORE = 'attachments';
+
+function tasare7OpenDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(TASARE7_DB_NAME, TASARE7_DB_VERSION);
+
+    req.onupgradeneeded = function(){
+      const db = req.result;
+      if(!db.objectStoreNames.contains(TASARE7_STORE)){
+        db.createObjectStore(TASARE7_STORE, {keyPath:'key'});
+      }
+    };
+
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+
+function tasare7HistoryKey(row){
+  return [
+    row.file_no || '',
+    row.companyKey || '',
+    row.trip_date || ''
+  ].join('|');
+}
+
+async function tasare7SaveAttachments(row){
+  const db = await tasare7OpenDB();
+  const tx = db.transaction(TASARE7_STORE,'readwrite');
+  const store = tx.objectStore(TASARE7_STORE);
+
+  const base = tasare7HistoryKey(row);
+
+  const inputs = document.querySelectorAll('input[type="file"]');
+
+  for(const input of inputs){
+    const files = Array.from(input.files || []);
+
+    const key = base + '|' + (input.id || input.name || 'file');
+
+    store.put({
+      key:key,
+      fileInputId:input.id || '',
+      fileInputName:input.name || '',
+      files:await Promise.all(files.map(async f=>({
+        name:f.name,
+        type:f.type || 'application/octet-stream',
+        lastModified:f.lastModified || Date.now(),
+        data:await f.arrayBuffer()
+      })))
+    });
+  }
+
+  await new Promise((resolve,reject)=>{
+    tx.oncomplete=resolve;
+    tx.onerror=()=>reject(tx.error);
+    tx.onabort=()=>reject(tx.error);
+  });
+
+  db.close();
+}
+
+async function tasare7RestoreAttachments(row){
+  const db = await tasare7OpenDB();
+
+  const base = tasare7HistoryKey(row);
+
+  const inputs = document.querySelectorAll('input[type="file"]');
+
+  for(const input of inputs){
+
+    const key = base + '|' + (input.id || input.name || 'file');
+
+    const data = await new Promise((resolve,reject)=>{
+      const tx = db.transaction(TASARE7_STORE,'readonly');
+      const req = tx.objectStore(TASARE7_STORE).get(key);
+
+      req.onsuccess=()=>resolve(req.result || null);
+      req.onerror=()=>reject(req.error);
+    });
+
+    if(!data || !data.files || !data.files.length){
+      continue;
+    }
+
+    const dt = new DataTransfer();
+
+    for(const f of data.files){
+      const file = new File(
+        [f.data],
+        f.name,
+        {
+          type:f.type,
+          lastModified:f.lastModified
+        }
+      );
+
+      dt.items.add(file);
+    }
+
+    input.files = dt.files;
+
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+
+  db.close();
+}
+</script>
+
+</body></html>
