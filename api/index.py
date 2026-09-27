@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 from datetime import datetime, date
 
@@ -12,7 +13,7 @@ from flask import Flask, request, send_file, jsonify, render_template
 from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils.datetime import from_excel
-from pypdf import PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
@@ -75,7 +76,7 @@ DOCX_TEMPLATES = {
     ("memory", "cairo"): STAMPS / "تصريح ميموري القاهره الأساسي.docx",
     ("unlimited", "luxor_overnight"): STAMPS / "ان ليميتيد ايجيبت تصريح الاقصر مبيت.docx",
     ("memory", "luxor_overnight"): STAMPS / "تصريح ميموري الاقصر مبيت الأساسي.docx",
-    ("memory", "hurghada"): STAMPS / "ميموري توصيله الغردقه.docx",
+    ("memory", "hurghada"): STAMPS / "A4_Templates/Memory_Trip_Hurghada_Transfer_A4.docx",
 }
 POLICE_TEMPLATE = STAMPS / "4_5859343746985894309.docx"
 
@@ -136,6 +137,9 @@ ALIASES = {
         "note", "notes",
         "ملاحظات", "ملحوظة",
         "重要备注"
+    ],
+    "English name": [
+        "english name", "english", "الاسم بالإنجليزية", "الاسم الانجليزي"
     ],
 }
 
@@ -238,7 +242,7 @@ def read_rooming(stream):
             for key, col in idx.items():
                 item[key] = raw_row[col] if col < len(raw_row) else ""
 
-            if not item.get("Passport") and not item.get("Chinese name") and not item.get("Given name"):
+            if not item.get("Passport") and not item.get("Chinese name") and not item.get("Given name") and not item.get("English name") and not item.get("Surname"):
                 continue
 
             item["ID"] = item.get("ID") or len(out) + 1
@@ -271,6 +275,7 @@ def read_rooming(stream):
                 [
                     soffice,
                     "--headless",
+                    f"-env:UserInstallation={(work / 'lo_profile').as_uri()}",
                     "--convert-to", "xlsx",
                     "--outdir", str(work),
                     str(src)
@@ -288,10 +293,18 @@ def read_rooming(stream):
             return load_xlsx(converted.read_bytes())
 
 def replace_cell(cell, value, size=14, bold=True):
+    original_paragraph = cell.paragraphs[0] if cell.paragraphs else None
+    paragraph_properties = deepcopy(original_paragraph._p.pPr) if original_paragraph is not None and original_paragraph._p.pPr is not None else None
+    run_properties = deepcopy(original_paragraph.runs[0]._r.rPr) if original_paragraph is not None and original_paragraph.runs and original_paragraph.runs[0]._r.rPr is not None else None
     cell.text = str(value)
-    for p in cell.paragraphs:
+    for index, p in enumerate(cell.paragraphs):
+        if index == 0 and paragraph_properties is not None:
+            if p._p.pPr is not None:
+                p._p.remove(p._p.pPr)
+            p._p.insert(0, deepcopy(paragraph_properties))
         for run in p.runs:
-            run.font.name = "Arial"
+            if run_properties is not None:
+                run._r.insert(0, deepcopy(run_properties))
             if size:
                 from docx.shared import Pt
                 run.font.size = Pt(size)
@@ -478,7 +491,9 @@ def libreoffice_convert(src, outdir):
     soffice = shutil.which("libreoffice") or shutil.which("soffice")
     if not soffice:
         raise RuntimeError("LibreOffice غير مثبت على الخادم. ثبته لتفعيل تحويل Word إلى PDF.")
-    subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(outdir), str(src)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+    profile = Path(outdir) / f"lo_profile_{Path(src).stem}"
+    profile.mkdir(parents=True, exist_ok=True)
+    subprocess.run([soffice, "--headless", f"-env:UserInstallation={profile.as_uri()}", "--convert-to", "pdf", "--outdir", str(outdir), str(src)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
     pdf = Path(outdir) / (Path(src).stem + ".pdf")
     if not pdf.exists():
         raise RuntimeError("فشل تحويل Word إلى PDF")
@@ -498,25 +513,39 @@ def overlay_docx_notice_fields(c, data):
 def overlay_legacy_notice_fields(c, data, w, h):
     """Fill blank cells on the old PDF stamps (page size ~612x936)."""
     c.setFillColor(colors.black)
+    scale = min(w / 612, h / 936)
+    offset_x = (w - 612 * scale) / 2
+    offset_y = (h - 936 * scale) / 2
+
+    def point(x, y):
+        return offset_x + x * scale, offset_y + y * scale
 
     # Header bar: file number on the right, trip date on the left.
-    c.setFont("Latin", 10)
-    c.drawRightString(w - 40, 768, data["file_no"])
-    c.setFont("Latin", 10)
-    c.drawString(248, 768, data["trip_date"])
+    c.setFont("Latin", 10 * scale)
+    x, y = point(572, 768)
+    c.drawRightString(x, y, data["file_no"])
+    c.setFont("Latin", 10 * scale)
+    x, y = point(248, 768)
+    c.drawString(x, y, data["trip_date"])
 
     # Company table value cells
-    draw_rtl(c, str(data["pax"]), 452, 712, 160, 11, True)
-    draw_rtl(c, data["guide"], 452, 696, 165, 10, True)
-    draw_rtl(c, data["phone"], 136, 696, 80, 8, True)
+    x, y = point(452, 712)
+    draw_rtl(c, str(data["pax"]), x, y, 160 * scale, 11 * scale, True)
+    x, y = point(452, 696)
+    draw_rtl(c, data["guide"], x, y, 165 * scale, 10 * scale, True)
+    x, y = point(136, 696)
+    draw_rtl(c, data["phone"], x, y, 80 * scale, 8 * scale, True)
 
     # Trip type + program
-    draw_rtl(c, data["permit"], 468, 526, 140, 9, True)
+    x, y = point(468, 526)
+    draw_rtl(c, data["permit"], x, y, 140 * scale, 9 * scale, True)
     program = data.get("program") or ""
-    draw_rtl(c, program, 208, 526, 150, 7)
+    x, y = point(208, 526)
+    draw_rtl(c, program, x, y, 150 * scale, 7 * scale)
 
     if data.get("issue_date"):
-        draw_rtl(c, f"تحريراً في : {data['issue_date']}", w - 40, 358, 220, 8)
+        x, y = point(572, 358)
+        draw_rtl(c, f"تحريراً في : {data['issue_date']}", x, y, 220 * scale, 8 * scale)
 
 
 def _format_display_date(value):
@@ -572,24 +601,28 @@ def overlay_notice_fields(pdf_bytes, data, legacy=None):
     out = PdfWriter()
 
     for page in src.pages[:3]:
+        page_width = float(page.mediabox.width)
+        page_height = float(page.mediabox.height)
+        scale_x = page_width / A4[0]
+        scale_y = page_height / A4[1]
         ov = io.BytesIO()
-        c = canvas.Canvas(ov, pagesize=A4)
+        c = canvas.Canvas(ov, pagesize=(page_width, page_height))
 
         # رقم الملف: أعلى اليمين فقط
         c.setFont("Latin", 11)
-        c.drawRightString(575, 806, str(data["file_no"]))
+        c.drawRightString(page_width - 20 * scale_x, 806 * scale_y, str(data["file_no"]))
 
         # تاريخ الرحلة: أعلى اليسار
         c.setFont("Latin", 9)
-        c.drawString(28, 806, str(data["trip_date"]))
+        c.drawString(28 * scale_x, 806 * scale_y, str(data["trip_date"]))
 
         # تاريخ التحرير
         draw_rtl(
             c,
             f"تحريراً في : {data['issue_date']}",
-            205,
-            150,
-            160,
+            205 * scale_x,
+            150 * scale_y,
+            160 * scale_x,
             8
         )
 
@@ -605,8 +638,10 @@ def overlay_notice_fields(pdf_bytes, data, legacy=None):
     return buf
 
 
-def overlay_unlimited_luxor_transfer_pdf(pdf_bytes, data):
+def overlay_legacy_notice_pdf(pdf_bytes, data):
     src = PdfReader(io.BytesIO(pdf_bytes))
+    if len(src.pages) < 3:
+        raise RuntimeError(f"قالب PDF للإخطارات يحتوي {len(src.pages)} صفحات فقط؛ المطلوب 3")
     out = PdfWriter()
 
     for page in src.pages[:3]:
@@ -620,9 +655,6 @@ def overlay_unlimited_luxor_transfer_pdf(pdf_bytes, data):
         ov.seek(0)
 
         page.merge_page(PdfReader(ov).pages[0])
-        out.add_page(page)
-
-    for page in src.pages[3:]:
         out.add_page(page)
 
     buf = io.BytesIO()
@@ -641,14 +673,14 @@ def build_notices(data, workdir):
             fill_docx_template(DOCX_TEMPLATES[key], data, filled)
         pdf = libreoffice_convert(filled, workdir)
         raw = pdf.read_bytes()
+        page_count = len(PdfReader(io.BytesIO(raw)).pages)
+        if page_count < 3:
+            raise RuntimeError(f"قالب الإخطار أنتج {page_count} صفحات؛ المطلوب 3 صفحات معتمدة")
         return overlay_notice_fields(raw, data, legacy=False)
     if key in LEGACY_PDF_TEMPLATES and LEGACY_PDF_TEMPLATES[key].exists():
         raw = LEGACY_PDF_TEMPLATES[key].read_bytes()
 
-        if key == ("unlimited", "luxor_transfer"):
-            return overlay_unlimited_luxor_transfer_pdf(raw, data)
-
-        return overlay_notice_fields(raw, data, legacy=False)
+        return overlay_legacy_notice_pdf(raw, data)
     raise ValueError("لا توجد استمارة رسمية معتمدة لهذا النوع في مجلد stamps/assets.")
 
 
@@ -670,7 +702,26 @@ def render_raw_rooming_pdf(excel_bytes, workdir):
     '''
     workdir = Path(workdir)
     src = workdir / "rooming_source.xlsx"
-    src.write_bytes(excel_bytes)
+    if zipfile.is_zipfile(io.BytesIO(excel_bytes)):
+        src.write_bytes(excel_bytes)
+    else:
+        soffice = shutil.which("libreoffice") or shutil.which("soffice")
+        if not soffice:
+            raise RuntimeError("LibreOffice غير مثبت لتحويل ملف Excel القديم .xls")
+        legacy_src = workdir / "rooming_source.xls"
+        legacy_src.write_bytes(excel_bytes)
+        profile = workdir / "lo_profile_rooming_xls"
+        profile.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [soffice, "--headless", f"-env:UserInstallation={profile.as_uri()}", "--convert-to", "xlsx", "--outdir", str(workdir), str(legacy_src)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=90,
+        )
+        converted = workdir / "rooming_source.xlsx"
+        if not converted.exists():
+            raise ValueError("تعذر تحويل ملف Excel القديم .xls")
 
     try:
         wb = load_workbook(str(src), data_only=False)
@@ -730,10 +781,13 @@ def render_raw_rooming_pdf(excel_bytes, workdir):
     if not soffice:
         raise RuntimeError("LibreOffice غير مثبت على الخادم.")
 
+    profile = workdir / "lo_profile_rooming_pdf"
+    profile.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
             soffice,
             "--headless",
+            f"-env:UserInstallation={profile.as_uri()}",
             "--convert-to",
             "pdf",
             "--outdir",
@@ -756,8 +810,8 @@ def render_raw_rooming_pdf(excel_bytes, workdir):
 
     pdf_bytes = pdf_path.read_bytes()
     reader = PdfReader(io.BytesIO(pdf_bytes))
-    if len(reader.pages) < 1:
-        raise ValueError("ملف النيم ليست لم ينتج صفحة صالحة.")
+    if len(reader.pages) != 1:
+        raise ValueError(f"النيم ليست يجب أن تنتج صفحة واحدة قبل نسخها؛ الناتج الحالي {len(reader.pages)} صفحات")
 
     return pdf_bytes
 
@@ -787,7 +841,7 @@ def make_room_page(data, rooming_pdf_bytes, copy_no):
     )
 
     c.setFont("Latin", 8)
-    copies = 1 if data.get("permit_key") == "hurghada" else 3
+    copies = 3
     c.drawString(28, H - 32, f"Copy {copy_no}/{copies}")
 
     draw_rtl(
@@ -925,17 +979,31 @@ def build_police_pdf(data, workdir):
         raise ValueError("ملف إخطار الشرطة غير موجود في stamps")
     filled = Path(workdir) / "police.docx"
     fill_police_notice(POLICE_TEMPLATE, data, filled)
-    return libreoffice_convert(filled, workdir)
+    pdf = libreoffice_convert(filled, workdir)
+    page_count = len(PdfReader(str(pdf)).pages)
+    if page_count != 1:
+        raise RuntimeError(f"إخطار الشرطة يجب أن يكون صفحة واحدة؛ أنتج LibreOffice {page_count} صفحات")
+    return pdf
 
 
 def merge_pages(notices, rooms, program_bytes=None):
     writer = PdfWriter()
-    for p in PdfReader(notices).pages[:3]: writer.add_page(p)
-    if program_bytes:
-        writer.add_page(PdfReader(make_program_page(program_bytes)).pages[0])
+    if not program_bytes:
+        raise ValueError("ارفع صورة إدارة البرامج لإكمال الصفحة السابعة")
+    notice_pages = PdfReader(notices).pages
+    if len(notice_pages) != 3:
+        raise RuntimeError(f"ملف الإخطارات يجب أن يحتوي 3 صفحات، لا {len(notice_pages)}")
+    for p in notice_pages: writer.add_page(_fit_page_to_a4(p))
     for i in range(1, 4):
-        writer.add_page(PdfReader(rooms[i-1]).pages[0])
-    expected = 7 if program_bytes else 6
+        room_pages = PdfReader(rooms[i-1]).pages
+        if len(room_pages) != 1:
+            raise RuntimeError(f"نسخة Rooming {i} يجب أن تكون صفحة واحدة")
+        writer.add_page(_fit_page_to_a4(room_pages[0]))
+    program_pages = PdfReader(make_program_page(program_bytes)).pages
+    if len(program_pages) != 1:
+        raise RuntimeError("صورة إدارة البرامج يجب أن تنتج صفحة واحدة")
+    writer.add_page(_fit_page_to_a4(program_pages[0]))
+    expected = 7
     if len(writer.pages) != expected:
         raise RuntimeError(f"خطأ في عدد الصفحات: {len(writer.pages)} بدل {expected}")
     out = io.BytesIO(); writer.write(out); out.seek(0); return out
@@ -952,15 +1020,30 @@ def _first_page(src):
     return reader.pages[0]
 
 
+def _fit_page_to_a4(page):
+    source_width = float(page.mediabox.width)
+    source_height = float(page.mediabox.height)
+    target_width, target_height = (landscape(A4) if source_width > source_height else A4)
+    scale = min(target_width / source_width, target_height / source_height)
+    offset_x = (target_width - source_width * scale) / 2
+    offset_y = (target_height - source_height * scale) / 2
+    result = PageObject.create_blank_page(width=target_width, height=target_height)
+    result.merge_transformed_page(page, Transformation().scale(scale).translate(offset_x, offset_y))
+    return result
+
+
 def merge_hurghada_pages(notices, room_page, program_bytes, police_pdf, extra_pdf):
     """3 إخطارات + روم ليست واحدة + إدارة البرامج + إخطار شرطة الأقصر + الورقة الإضافية."""
     writer = PdfWriter()
-    for p in PdfReader(notices).pages[:3]:
-        writer.add_page(p)
-    writer.add_page(_first_page(room_page))
-    writer.add_page(_first_page(make_program_page(program_bytes)))
-    writer.add_page(_first_page(police_pdf))
-    writer.add_page(_first_page(extra_pdf))
+    notice_pages = PdfReader(notices).pages
+    if len(notice_pages) != 3:
+        raise RuntimeError(f"ملف الإخطارات يجب أن يحتوي 3 صفحات، لا {len(notice_pages)}")
+    for p in notice_pages:
+        writer.add_page(_fit_page_to_a4(p))
+    writer.add_page(_fit_page_to_a4(_first_page(room_page)))
+    writer.add_page(_fit_page_to_a4(_first_page(make_program_page(program_bytes))))
+    writer.add_page(_fit_page_to_a4(_first_page(police_pdf)))
+    writer.add_page(_fit_page_to_a4(_first_page(extra_pdf)))
     if len(writer.pages) != 7:
         raise RuntimeError(f"خطأ في عدد صفحات الغردقة: {len(writer.pages)} بدل 7")
     out = io.BytesIO(); writer.write(out); out.seek(0); return out
@@ -1002,18 +1085,27 @@ def preview_rooming():
         if not raw:
             raise ValueError("ملف النيم ليست فارغ.")
 
-        wb = load_workbook(io.BytesIO(raw), data_only=False, read_only=True)
-        ws = wb.active
-
-        nonempty_rows = 0
-        for row in ws.iter_rows(values_only=True):
-            if any(v not in (None, "") for v in row):
-                nonempty_rows += 1
+        tourists = read_rooming(raw)
+        rows = [
+            {
+                "id": item.get("ID", ""),
+                "chinese": item.get("Chinese name", ""),
+                "english": item.get("English name") or " ".join(
+                    str(part) for part in (item.get("Surname", ""), item.get("Given name", "")) if part
+                ),
+                "sex": item.get("Sex", ""),
+                "dob": item.get("DOB", ""),
+                "passport": item.get("Passport", ""),
+                "expiry": item.get("Expiry", ""),
+                "room": item.get("Room", ""),
+            }
+            for item in tourists
+        ]
 
         return jsonify(
             ok=True,
-            count=nonempty_rows,
-            rows=[],
+            count=len(tourists),
+            rows=rows,
             raw_copy=True,
         )
 
@@ -1033,7 +1125,11 @@ def generate():
             raise ValueError("الشركة أو نوع التصريح غير صحيح")
 
         pax_raw = str(f.get("pax", "")).strip()
-        pax = int(pax_raw) if pax_raw.isdigit() else 0
+        if not pax_raw.isdecimal():
+            raise ValueError("أدخل عدد السياح يدويًا كعدد صحيح موجب")
+        pax = int(pax_raw)
+        if pax < 1:
+            raise ValueError("يجب أن يكون عدد السياح أكبر من صفر")
 
         file_no = f.get("file_no", "").strip()
         guide = f.get("guide", "").strip()
@@ -1075,8 +1171,9 @@ def generate():
             if program_file and program_file.filename
             else None
         )
+        if not program_bytes:
+            raise ValueError("ارفع صورة إدارة البرامج لإكمال الصفحة السابعة")
 
-        extra_file = request.files.get("extra_page")
         company = COMPANIES[company_key]
 
         data = {
@@ -1113,54 +1210,33 @@ def generate():
             main_name = f"{safe}_{suffix}.pdf"
 
             if permit_key == "hurghada":
-                if not program_bytes:
-                    raise ValueError(
-                        "ارفع صورة إدارة البرامج. ملف الغردقة لازم 7 ورقات"
-                    )
-                if not extra_file or not extra_file.filename:
-                    raise ValueError(
-                        "ارفع الورقة الإضافية. ملف الغردقة لازم 7 ورقات"
-                    )
-
-                extra_pdf = extra_page_from_upload(extra_file)
-                police_pdf = build_police_pdf(data, td)
-
-                room_one = (
-                    make_room_shot_page(room_shot.read())
-                    if room_shot
-                    else None
-                )
-
-                final = merge_hurghada_pages(
-                    notices,
-                    room_one,
-                    program_bytes,
-                    police_pdf,
-                    extra_pdf,
-                )
-
+                rooming_pdf_bytes = make_room_shot_page(room_shot.read()).getvalue()
             else:
                 rooming_pdf_bytes = render_raw_rooming_pdf(
                     rooming_excel_bytes, td
                 )
 
-                room_pages = [
-                    make_room_page(data, rooming_pdf_bytes, i)
-                    for i in range(1, 4)
-                ]
+            room_pages = [
+                make_room_page(data, rooming_pdf_bytes, i)
+                for i in range(1, 4)
+            ]
 
-                final = merge_pages(
-                    notices,
-                    room_pages,
-                    program_bytes,
-                )
+            final = merge_pages(
+                notices,
+                room_pages,
+                program_bytes,
+            )
 
-            return send_file(
+            final_page_count = len(PdfReader(final).pages)
+            final.seek(0)
+            response = send_file(
                 final,
                 mimetype="application/pdf",
                 as_attachment=True,
                 download_name=main_name,
             )
+            response.headers["X-PDF-Page-Count"] = str(final_page_count)
+            return response
 
     except Exception as e:
         return jsonify(error=str(e)), 400
