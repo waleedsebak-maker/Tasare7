@@ -69,6 +69,8 @@ PROGRAM_PRESETS = {
 
 
 DOCX_TEMPLATES = {
+    ("memory", "luxor_transfer"): STAMPS / "A4_Templates/Memory_Trip_Luxor_Transfer_A4.docx",
+    ("unlimited", "luxor_transfer"): STAMPS / "A4_Templates/EN_Limited_Luxor_Transfer_A4.docx",
     ("unlimited", "cairo"): STAMPS / "ان ليميتيد ايجيبت تصريح القاهره(1).docx",
     ("memory", "cairo"): STAMPS / "تصريح ميموري القاهره الأساسي.docx",
     ("unlimited", "luxor_overnight"): STAMPS / "ان ليميتيد ايجيبت تصريح الاقصر مبيت.docx",
@@ -326,20 +328,17 @@ def _set_transport_cell(cell, label, value):
     r1 = paragraph.add_run(base.strip())
     r2 = paragraph.add_run(" " + value)
 
-    # تكبير وتغليظ القيمة المدخلة فقط
+    # تكبير وتغليظ القيم المطلوبة فقط؛ القالب والخلايا والحدود لا تتغير.
     try:
         from docx.shared import Pt
 
         font_sizes = {
-            "العدد": 14,
-            "المرشد": 14,
-            "الهاتف": 14,
-            "التصريح": 14,
-            "البرنامج": 13,
-            "السائق": 14,
-            "رقم الهاتف": 14,
-            "شركة النقل": 13,
-            "رقم السيارة": 13,
+            "العدد": 18,
+            "المرشد": 16,
+            "الهاتف": 15,
+            "التصريح": 16,
+            "البرنامج": 14,
+            "شركة النقل": 15,
         }
 
         if label in font_sizes:
@@ -347,29 +346,6 @@ def _set_transport_cell(cell, label, value):
             r2.bold = True
     except Exception:
         pass
-
-    # Increase ONLY the inserted value text.
-    # Original labels, cells, borders and layout remain unchanged.
-    try:
-        from docx.shared import Pt
-
-        font_sizes = {
-            "العدد": 14,
-            "المرشد": 14,
-            "الهاتف": 14,
-            "التصريح": 14,
-            "البرنامج": 13,
-            "السائق": 14,
-            "رقم الهاتف": 14,
-            "شركة النقل": 13,
-            "رقم السيارة": 13,
-        }
-
-        if label in font_sizes:
-            r2.font.size = Pt(font_sizes[label])
-    except Exception:
-        pass
-
 
     if rpr is not None:
         try:
@@ -395,7 +371,7 @@ def _fill_transport_tables(doc, data):
         # Company name: label R0C0, value R0C1
         company = str(data.get("transport_company", "") or "").strip()
         if company and len(table.rows) > 0 and len(table.rows[0].cells) > 1:
-            replace_cell(table.cell(0, 1), company)
+            replace_cell(table.cell(0, 1), company, 15, True)
 
         # Vehicle number: label R1C2, value R1C3
         vehicle = str(data.get("vehicle_number", "") or "").strip()
@@ -629,6 +605,32 @@ def overlay_notice_fields(pdf_bytes, data, legacy=None):
     return buf
 
 
+def overlay_unlimited_luxor_transfer_pdf(pdf_bytes, data):
+    src = PdfReader(io.BytesIO(pdf_bytes))
+    out = PdfWriter()
+
+    for page in src.pages[:3]:
+        w = float(page.mediabox.width)
+        h = float(page.mediabox.height)
+
+        ov = io.BytesIO()
+        c = canvas.Canvas(ov, pagesize=(w, h))
+        overlay_legacy_notice_fields(c, data, w, h)
+        c.save()
+        ov.seek(0)
+
+        page.merge_page(PdfReader(ov).pages[0])
+        out.add_page(page)
+
+    for page in src.pages[3:]:
+        out.add_page(page)
+
+    buf = io.BytesIO()
+    out.write(buf)
+    buf.seek(0)
+    return buf
+
+
 def build_notices(data, workdir):
     key = (data["company_key"], data["permit_key"])
     if key in DOCX_TEMPLATES and DOCX_TEMPLATES[key].exists():
@@ -642,6 +644,10 @@ def build_notices(data, workdir):
         return overlay_notice_fields(raw, data, legacy=False)
     if key in LEGACY_PDF_TEMPLATES and LEGACY_PDF_TEMPLATES[key].exists():
         raw = LEGACY_PDF_TEMPLATES[key].read_bytes()
+
+        if key == ("unlimited", "luxor_transfer"):
+            return overlay_unlimited_luxor_transfer_pdf(raw, data)
+
         return overlay_notice_fields(raw, data, legacy=False)
     raise ValueError("لا توجد استمارة رسمية معتمدة لهذا النوع في مجلد stamps/assets.")
 

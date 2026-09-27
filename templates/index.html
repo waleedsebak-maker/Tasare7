@@ -96,12 +96,23 @@
 <p class="hint" id="hurghadaNote" hidden>الغردقة: 7 ورقات في PDF واحد — 3 إخطارات + روم ليست واحدة + إدارة البرامج + إخطار شرطة الأقصر + الورقة الإضافية.</p>
 </div>
 <div class="section"><h2>المرشد والتواريخ</h2><div class="grid">
-<label>اسم المرشد الكامل<input name="guide" id="guide" list="guideList" required></label>
-<label>هاتف المرشد<input name="phone" id="phone" list="phoneList"></label>
+<label>اسم المرشد الكامل
+<select name="guide" id="guide" required>
+<option value="">اختر المرشد</option>
+</select>
+</label>
+<label>هاتف المرشد
+<select name="phone" id="phone">
+<option value="">اختر الهاتف</option>
+</select>
+</label>
 <label>تاريخ الرحلة<input name="trip_date" type="date" required></label>
 <label>تحريراً في<input name="issue_date" type="date"></label>
 </div>
-<datalist id="guideList"></datalist><datalist id="phoneList"></datalist>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+<button type="button" id="addGuideBtn">إضافة مرشد ورقم جديد</button>
+</div>
+
 </div>
 <div class="section"><h2>البرنامج والفنادق</h2>
 <label>البرنامج / أماكن الإقامة<textarea name="program" rows="3" required placeholder="زعفرانه – خان – ازهر – مصر القديمه – عشاء – الفندق"></textarea></label>
@@ -186,32 +197,226 @@ const programs={
 };
 const MEM_KEY='tasare7_memory_v2';
 const HIS_KEY='tasare7_history_v2';
-function loadMem(){try{return JSON.parse(localStorage.getItem(MEM_KEY)||'{}')}catch(e){return {}}}
-function saveMem(p){localStorage.setItem(MEM_KEY, JSON.stringify(p))}
-function uniq(arr){return [...new Set((arr||[]).filter(Boolean))].slice(0,12)}
-function fillList(id, items){document.getElementById(id).innerHTML=uniq(items).map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}
+
+function loadMem(){
+  let m={};
+
+  try{
+    m=JSON.parse(localStorage.getItem(MEM_KEY)||'{}');
+  }catch(e){
+    m={};
+  }
+
+  if(!m || typeof m!=='object') m={};
+  if(!m.guidePhones) m.guidePhones={};
+
+  // ترحيل المرشدين والأرقام القديمة من History
+  try{
+    const items=JSON.parse(localStorage.getItem(HIS_KEY)||'[]');
+
+    (items||[]).forEach(x=>{
+      const g=String(x.guide||'').trim();
+      const ph=String(x.phone||'').trim();
+
+      if(g && ph){
+        m.guidePhones[g]=ph;
+      }
+    });
+  }catch(e){}
+
+  if(m.lastGuide && m.lastPhone){
+    m.guidePhones[m.lastGuide]=m.lastPhone;
+  }
+
+  return m;
+}
+
+function saveMem(m){
+  localStorage.setItem(MEM_KEY,JSON.stringify(m));
+}
+
+function uniq(arr){
+  return [...new Set((arr||[]).filter(Boolean))].slice(0,50);
+}
+
+function fillList(id,items){
+  const el=document.getElementById(id);
+  if(!el) return;
+
+  const first =
+    id==='guide'
+      ? 'اختر المرشد'
+      : id==='phone'
+        ? 'اختر الهاتف'
+        : '';
+
+  el.innerHTML =
+    (first ? `<option value="">${first}</option>` : '') +
+    uniq(items).map(v=>{
+      const x=String(v);
+      const safe=x.replace(/"/g,'&quot;');
+      return `<option value="${safe}">${x}</option>`;
+    }).join('');
+}
+
 function applyMemory(){
   const m=loadMem();
-  fillList('guideList', m.guides);
-  fillList('phoneList', m.phones);
-  fillList('hotelFromList', m.hotelsFrom);
-  fillList('hotelToList', m.hotelsTo);
-  if(m.lastCompany) company.value=m.lastCompany;
-  if(m.lastGuide && !document.getElementById('guide').value) document.getElementById('guide').value=m.lastGuide;
-  if(m.lastPhone && !document.getElementById('phone').value) document.getElementById('phone').value=m.lastPhone;
+
+  const pairs=Object.entries(m.guidePhones||{});
+
+  const guides=uniq([
+    ...pairs.map(x=>x[0]),
+    ...(m.guides||[])
+  ]);
+
+  const phones=uniq([
+    ...pairs.map(x=>x[1]),
+    ...(m.phones||[])
+  ]);
+
+  fillList('guide',guides);
+  fillList('phone',phones);
+
+  fillList('hotelFromList',m.hotelsFrom||[]);
+  fillList('hotelToList',m.hotelsTo||[]);
+
+  if(m.lastCompany){
+    company.value=m.lastCompany;
+  }
+
+  const guide=document.getElementById('guide');
+  const phone=document.getElementById('phone');
+
+  if(m.lastGuide){
+    guide.value=m.lastGuide;
+  }
+
+  if(m.lastPhone){
+    phone.value=m.lastPhone;
+  }
+
+  syncGuidePhone();
 }
+
 function rememberCurrent(){
   const m=loadMem();
-  m.guides=uniq([document.getElementById('guide').value, ...(m.guides||[])]);
-  m.phones=uniq([document.getElementById('phone').value, ...(m.phones||[])]);
-  m.hotelsFrom=uniq([document.getElementById('hotel_from').value, ...(m.hotelsFrom||[])]);
-  m.hotelsTo=uniq([document.getElementById('hotel_to').value, ...(m.hotelsTo||[])]);
+
+  const guide=document.getElementById('guide').value.trim();
+  const phone=document.getElementById('phone').value.trim();
+
+  m.guides=uniq([
+    guide,
+    ...(m.guides||[])
+  ]);
+
+  m.phones=uniq([
+    phone,
+    ...(m.phones||[])
+  ]);
+
+  if(!m.guidePhones){
+    m.guidePhones={};
+  }
+
+  if(guide && phone){
+    m.guidePhones[guide]=phone;
+  }
+
+  m.hotelsFrom=uniq([
+    document.getElementById('hotel_from').value,
+    ...(m.hotelsFrom||[])
+  ]);
+
+  m.hotelsTo=uniq([
+    document.getElementById('hotel_to').value,
+    ...(m.hotelsTo||[])
+  ]);
+
   m.lastCompany=company.value;
-  m.lastGuide=document.getElementById('guide').value;
-  m.lastPhone=document.getElementById('phone').value;
+  m.lastGuide=guide;
+  m.lastPhone=phone;
+
   saveMem(m);
   applyMemory();
 }
+
+function syncGuidePhone(){
+  const guide=document.getElementById('guide');
+  const phone=document.getElementById('phone');
+
+  if(!guide || !phone) return;
+
+  const m=loadMem();
+  const linked=(m.guidePhones||{})[guide.value];
+
+  if(linked){
+    phone.value=linked;
+  }
+}
+
+function syncGuideFromPhone(){
+  const guide=document.getElementById('guide');
+  const phone=document.getElementById('phone');
+
+  if(!guide || !phone) return;
+
+  const m=loadMem();
+  const current=phone.value;
+
+  if(!current) return;
+
+  const found=Object.entries(m.guidePhones||{})
+    .find(([g,p])=>p===current);
+
+  if(found){
+    guide.value=found[0];
+  }
+}
+
+function addNewGuidePair(){
+  const g=prompt('اكتب اسم المرشد الجديد:');
+
+  if(!g || !g.trim()){
+    return;
+  }
+
+  const ph=prompt('اكتب رقم هاتف المرشد الجديد:');
+
+  if(!ph || !ph.trim()){
+    return;
+  }
+
+  const guide=g.trim();
+  const phone=ph.trim();
+
+  const m=loadMem();
+
+  if(!m.guidePhones){
+    m.guidePhones={};
+  }
+
+  m.guidePhones[guide]=phone;
+
+  m.guides=uniq([
+    guide,
+    ...(m.guides||[])
+  ]);
+
+  m.phones=uniq([
+    phone,
+    ...(m.phones||[])
+  ]);
+
+  m.lastGuide=guide;
+  m.lastPhone=phone;
+
+  saveMem(m);
+  applyMemory();
+
+  document.getElementById('guide').value=guide;
+  document.getElementById('phone').value=phone;
+}
+
 function loadHistory(){
   let items=[];
   try{
@@ -272,14 +477,14 @@ function loadHistoryItem(index){
 
   const x=items[index];
 
-tasare7RestoreAttachments(x).catch(err=>{
-  console.error('TASARE7_ATTACHMENT_RESTORE_ERROR',err);
-});
-
   if(!x){
     alert('التصريح المحفوظ غير موجود');
     return;
   }
+
+  tasare7RestoreAttachments(x).catch(err=>{
+    console.error('TASARE7_ATTACHMENT_RESTORE_ERROR',err);
+  });
 
   const setValue=(id,value)=>{
     const el=document.getElementById(id);
@@ -319,7 +524,7 @@ tasare7RestoreAttachments(x).catch(err=>{
     program.value=x.program || '';
   }
 
-  syncChurgada();
+  syncHurghada();
 
   // لا ننقل بيانات النقل من التصريح القديم
   const transportIds=[
@@ -418,6 +623,47 @@ function refresh(keepPermit){
   program.value=programs[company.value]?.[permit.value]||'';
   syncHurghada();
 }
+
+const guideField=document.getElementById('guide');
+const phoneField=document.getElementById('phone');
+
+if(guideField){
+  guideField.addEventListener('change',syncGuidePhone);
+  guideField.addEventListener('input',function(){
+    const m=loadMem();
+    const g=guideField.value.trim();
+
+    if(m.guidePhones && m.guidePhones[g]){
+      phoneField.value=m.guidePhones[g];
+    }
+  });
+  guideField.addEventListener('blur',syncGuidePhone);
+}
+
+if(phoneField){
+  phoneField.addEventListener('change',syncGuideFromPhone);
+  phoneField.addEventListener('blur',function(){
+    syncGuideFromPhone();
+    rememberGuidePairNow();
+  });
+}
+
+
+document.getElementById('guide').addEventListener(
+  'change',
+  syncGuidePhone
+);
+
+document.getElementById('phone').addEventListener(
+  'change',
+  syncGuideFromPhone
+);
+
+document.getElementById('addGuideBtn').addEventListener(
+  'click',
+  addNewGuidePair
+);
+
 company.addEventListener('change',()=>refresh(true));
 permit.addEventListener('change',()=>{ program.value=programs[company.value]?.[permit.value]||''; syncHurghada(); });
 applyMemory();
